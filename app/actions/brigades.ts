@@ -4,9 +4,15 @@ import { prisma } from "@/lib/prisma";
 import { Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
-import { getSession } from "@/lib/auth";
+import { checkRole } from "@/lib/rbac";
+
+async function checkAdmin() {
+    await checkRole(['ADMIN', 'DIRECTOR', 'AGRONOMIST']);
+}
 
 export async function createBrigadier(formData: FormData) {
+    await checkAdmin();
+
     const fullName = formData.get("fullName") as string;
     const username = formData.get("username") as string;
     const password = formData.get("password") as string;
@@ -48,6 +54,7 @@ export async function createBrigadier(formData: FormData) {
 }
 
 export async function getBrigadiers() {
+    await checkRole(['ADMIN', 'DIRECTOR', 'AGRONOMIST', 'MONITOR', 'WAREHOUSEMAN']);
     return await prisma.brigadier.findMany({
         include: {
             user: true,
@@ -58,6 +65,7 @@ export async function getBrigadiers() {
 }
 
 export async function getBrigadierById(id: string) {
+    await checkRole(['ADMIN', 'DIRECTOR', 'AGRONOMIST', 'MONITOR', 'BRIGADIER']);
     return await prisma.brigadier.findUnique({
         where: { id },
         include: {
@@ -75,6 +83,7 @@ export async function getBrigadierById(id: string) {
 }
 
 export async function createContour(formData: FormData) {
+    await checkAdmin();
     const number = formData.get("number") as string;
     const name = formData.get("name") as string;
     const area = parseFloat(formData.get("area") as string);
@@ -102,6 +111,7 @@ export async function createContour(formData: FormData) {
 }
 
 export async function getContours() {
+    await checkRole(['ADMIN', 'DIRECTOR', 'AGRONOMIST', 'MONITOR']);
     return await prisma.contour.findMany({
         include: {
             brigadier: {
@@ -113,6 +123,7 @@ export async function getContours() {
 }
 
 export async function assignContour(contourId: string, brigadierId: string | null) {
+    await checkAdmin();
     try {
         await prisma.contour.update({
             where: { id: contourId },
@@ -134,9 +145,9 @@ export async function createBrigadierTransaction(data: {
     description?: string,
     createdById: string
 }) {
+    await checkRole(['ADMIN', 'WAREHOUSEMAN', 'BRIGADIER']);
     try {
         await prisma.$transaction(async (tx) => {
-            // 1. Create transaction recording
             const transactionType = data.type === 'IN' ? 'TRANSFER' : (data.type === 'OUT' ? 'CONSUMPTION' : data.type);
 
             await tx.transaction.create({
@@ -154,19 +165,13 @@ export async function createBrigadierTransaction(data: {
             const product = await tx.product.findUnique({ where: { id: data.productId } });
             if (!product) throw new Error("Mahsulot topilmadi");
 
-            // Logic flow based on Senior Architecture:
-            // TRANSFER: Warehouse (-) -> Brigadier (+)
-            // CONSUMPTION: Brigadier (-) -> Field (0)
-
             if (transactionType === 'TRANSFER') {
-                // Reduce from Main Warehouse
                 if (product.currentStock < data.amount) throw new Error("Omborda yetarli mahsulot yo'q");
                 await tx.product.update({
                     where: { id: data.productId },
                     data: { currentStock: { decrement: data.amount } }
                 });
 
-                // Increase Brigadier Personal Stock
                 await (tx as any).brigadierStock.upsert({
                     where: {
                         brigadierId_productId: {
@@ -183,7 +188,6 @@ export async function createBrigadierTransaction(data: {
                 });
             }
             else if (transactionType === 'CONSUMPTION') {
-                // Check Brigadier's own stock
                 const bStock = await (tx as any).brigadierStock.findUnique({
                     where: {
                         brigadierId_productId: {
@@ -201,8 +205,6 @@ export async function createBrigadierTransaction(data: {
                     where: { id: bStock.id },
                     data: { amount: { decrement: data.amount } }
                 });
-
-                // Note: Main Warehouse is NOT affected during consumption, it was already reduced during Transfer.
             }
         });
 
@@ -211,14 +213,13 @@ export async function createBrigadierTransaction(data: {
         revalidatePath("/brigadier-dashboard");
         return { success: true };
     } catch (error: any) {
-        console.error("Transaction Error:", error);
         return { error: error.message };
     }
 }
 
 export async function getMeBrigadier() {
-    const session = await getSession();
-    if (!session || session.role !== 'BRIGADIER') return null;
+    const session = await checkRole(['BRIGADIER']);
+    if (!session) return null;
 
     return await prisma.brigadier.findUnique({
         where: { userId: session.userId },
@@ -238,12 +239,14 @@ export async function getMeBrigadier() {
 }
 
 export async function getProducts() {
+    await checkRole(['ADMIN', 'WAREHOUSEMAN', 'AGRONOMIST', 'BRIGADIER']);
     return await prisma.product.findMany({
         orderBy: { name: 'asc' }
     });
 }
 
 export async function getBrigadierInventory(brigadierId: string) {
+    await checkRole(['ADMIN', 'AGRONOMIST', 'BRIGADIER']);
     const stocks = await (prisma as any).brigadierStock.findMany({
         where: { brigadierId },
         include: { product: true }
@@ -258,7 +261,6 @@ export async function getBrigadierInventory(brigadierId: string) {
     })).filter((item: any) => item.currentStock > 0);
 }
 
-// Work Stages & Activities
 export async function getWorkStages() {
     return await prisma.workStage.findMany({
         orderBy: { order: 'asc' }
@@ -266,6 +268,7 @@ export async function getWorkStages() {
 }
 
 export async function createWorkStage(name: string, order: number, description?: string) {
+    await checkAdmin();
     try {
         await prisma.workStage.create({
             data: { name, order, description }
@@ -278,6 +281,7 @@ export async function createWorkStage(name: string, order: number, description?:
 }
 
 export async function deleteWorkStage(id: string) {
+    await checkAdmin();
     try {
         await prisma.workStage.delete({ where: { id } });
         revalidatePath("/brigades");
@@ -288,6 +292,7 @@ export async function deleteWorkStage(id: string) {
 }
 
 export async function resetFieldActivities() {
+    await checkAdmin();
     try {
         await prisma.fieldActivity.deleteMany({});
         revalidatePath("/brigades");
@@ -299,7 +304,15 @@ export async function resetFieldActivities() {
 }
 
 export async function assignWorkPlanToContour(contourId: string, workStageIds: string[], brigadierId: string) {
+    await checkAdmin();
     try {
+        if (!brigadierId) {
+            // If plan is being assigned but no brigadier is linked to contour (unlikely but safe check)
+            const contour = await prisma.contour.findUnique({ where: { id: contourId } });
+            if (contour?.brigadierId) brigadierId = contour.brigadierId;
+            else throw new Error("Konturga brigadir biriktirilmagan");
+        }
+
         const data = workStageIds.map(wsId => ({
             contourId,
             workStageId: wsId,
@@ -307,7 +320,6 @@ export async function assignWorkPlanToContour(contourId: string, workStageIds: s
             status: "PENDING" as any
         }));
 
-        // Use a transaction to ensure all are created or none
         await prisma.$transaction(
             data.map(item =>
                 (prisma.fieldActivity as any).upsert({
@@ -317,7 +329,7 @@ export async function assignWorkPlanToContour(contourId: string, workStageIds: s
                             workStageId: item.workStageId
                         }
                     },
-                    update: { brigadierId: item.brigadierId },
+                    update: { brigadierId: item.brigadierId }, // Just update brigadier if exists, keep status
                     create: item
                 })
             )
@@ -331,7 +343,26 @@ export async function assignWorkPlanToContour(contourId: string, workStageIds: s
     }
 }
 
+export async function removeWorkStageFromContour(contourId: string, workStageId: string) {
+    await checkAdmin();
+    try {
+        await (prisma.fieldActivity as any).delete({
+            where: {
+                contourId_workStageId: {
+                    contourId,
+                    workStageId
+                }
+            }
+        });
+        revalidatePath("/brigades");
+        return { success: true };
+    } catch (error: any) {
+        return { error: error.message };
+    }
+}
+
 export async function getFieldActivities(brigadierId?: string) {
+    await checkRole(['ADMIN', 'DIRECTOR', 'AGRONOMIST', 'MONITOR', 'BRIGADIER']);
     return await prisma.fieldActivity.findMany({
         where: brigadierId ? { brigadierId } : {},
         include: {
@@ -356,6 +387,7 @@ export async function updateFieldActivity(data: {
     status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED",
     comment?: string
 }) {
+    await checkRole(['ADMIN', 'AGRONOMIST', 'BRIGADIER']);
     try {
         await (prisma.fieldActivity as any).upsert({
             where: {
@@ -386,4 +418,3 @@ export async function updateFieldActivity(data: {
         return { error: error.message };
     }
 }
-

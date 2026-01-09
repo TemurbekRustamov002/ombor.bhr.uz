@@ -1,11 +1,18 @@
 'use server';
 
 import { prisma } from "@/lib/prisma";
-import { getSession } from "@/lib/auth";
 import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
+import { checkRole } from "@/lib/rbac";
+import { notifyAdmins } from "./notifications";
+
+async function checkAdmin() {
+    await checkRole(['ADMIN']);
+}
 
 export async function createFarmer(formData: FormData) {
+    await checkAdmin();
+
     const name = formData.get("name") as string;
     const inn = formData.get("inn") as string;
     const landArea = parseFloat(formData.get("landArea") as string) || 0;
@@ -18,21 +25,14 @@ export async function createFarmer(formData: FormData) {
     const pinfl = formData.get("pinfl") as string;
     const address = formData.get("address") as string;
 
-    const session = await getSession();
-    if (!session || (session.role !== 'SUPERADMIN' && session.role !== 'ADMIN')) {
-        return { error: "Ruxsat berilmagan" };
-    }
-
     if (!name || !inn || !address) {
         return { error: "Barcha majburiy maydonlarni to'ldiring" };
     }
 
     try {
-        // 1. Check if user or farmer exists
         const existingUser = await prisma.user.findUnique({ where: { username: inn } });
         if (existingUser) return { error: "Ushbu INN bilan foydalanuvchi allaqachon mavjud" };
 
-        // 2. Create User account for farmer (password defaults to inn or similar)
         const hashedPassword = await bcrypt.hash(inn, 10);
 
         const user = await prisma.user.create({
@@ -44,7 +44,6 @@ export async function createFarmer(formData: FormData) {
             }
         });
 
-        // 3. Create Farmer profile
         await prisma.farmer.create({
             data: {
                 userId: user.id,
@@ -61,6 +60,13 @@ export async function createFarmer(formData: FormData) {
             }
         });
 
+        await notifyAdmins(
+            "Yangi fermer qo'shildi",
+            `"${name}" fermer xo'jaligi tizimga muvaffaqiyatli kiritildi.`,
+            "SUCCESS",
+            "/farmers"
+        );
+
         revalidatePath("/farmers");
         return { success: true };
     } catch (error: any) {
@@ -69,8 +75,7 @@ export async function createFarmer(formData: FormData) {
 }
 
 export async function getFarmers() {
-    const session = await getSession();
-    if (!session) return [];
+    await checkRole(['ADMIN', 'DIRECTOR', 'MONITOR', 'WAREHOUSEMAN']);
 
     return await prisma.farmer.findMany({
         include: {
@@ -84,10 +89,7 @@ export async function getFarmers() {
 }
 
 export async function updateFarmerCredentials(farmerId: string, newPassword?: string) {
-    const session = await getSession();
-    if (!session || (session.role !== 'SUPERADMIN' && session.role !== 'ADMIN')) {
-        return { error: "Ruxsat berilmagan" };
-    }
+    await checkAdmin();
 
     const farmer = await prisma.farmer.findUnique({ where: { id: farmerId }, include: { user: true } });
     if (!farmer) return { error: "Fermer topilmadi" };
@@ -106,10 +108,7 @@ export async function updateFarmerCredentials(farmerId: string, newPassword?: st
 
 export async function updateFarmerCustomData(farmerId: string, key: string, value: any) {
     try {
-        const session = await getSession();
-        if (!session || (session.role !== 'SUPERADMIN' && session.role !== 'ADMIN')) {
-            return { error: "Ruxsat berilmagan" };
-        }
+        await checkAdmin();
 
         const farmer = await prisma.farmer.findUnique({ where: { id: farmerId } });
         if (!farmer) return { error: "Fermer topilmadi" };
@@ -130,8 +129,7 @@ export async function updateFarmerCustomData(farmerId: string, key: string, valu
 }
 
 export async function getFarmerById(id: string) {
-    const session = await getSession();
-    if (!session) return null;
+    await checkRole(['ADMIN', 'DIRECTOR', 'MONITOR', 'FARMER']);
 
     return await prisma.farmer.findUnique({
         where: { id },
@@ -154,10 +152,7 @@ export async function createOrUpdateContract(data: {
     planAmount: number,
     status?: string
 }) {
-    const session = await getSession();
-    if (!session || (session.role !== 'SUPERADMIN' && session.role !== 'ADMIN')) {
-        return { error: "Ruxsat berilmagan" };
-    }
+    await checkAdmin();
     try {
         await prisma.contract.upsert({
             where: {
@@ -186,10 +181,7 @@ export async function createOrUpdateContract(data: {
 
 export async function deleteFarmer(id: string) {
     try {
-        const session = await getSession();
-        if (!session || (session.role !== 'SUPERADMIN' && session.role !== 'ADMIN')) {
-            throw new Error("Ruxsat berilmagan");
-        }
+        await checkAdmin();
 
         const farmer = await prisma.farmer.findUnique({ where: { id }, include: { user: true } });
         if (!farmer) return { error: "Fermer topilmadi" };
@@ -221,6 +213,8 @@ export async function updateFarmer(id: string, data: {
     pinfl?: string
 }) {
     try {
+        await checkAdmin();
+
         const farmer = await prisma.farmer.findUnique({ where: { id } });
         if (!farmer) return { error: "Fermer topilmadi" };
 

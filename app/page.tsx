@@ -12,6 +12,9 @@ export default async function Home() {
   if (session?.role === 'BRIGADIER') {
     redirect("/brigadier-dashboard");
   }
+  if (session?.role === 'WAREHOUSEMAN') {
+    redirect("/warehouse");
+  }
 
   const stats = await getMonitoringStats();
 

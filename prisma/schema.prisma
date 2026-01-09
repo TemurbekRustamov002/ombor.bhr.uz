@@ -8,12 +8,14 @@ datasource db {
 }
 
 enum Role {
+  SUPER_ADMIN
   ADMIN
   DIRECTOR
   FARMER
   WAREHOUSEMAN
   AGRONOMIST
   BRIGADIER
+  MONITOR
 }
 
 enum TransactionType {
@@ -48,6 +50,7 @@ model User {
   brigadierProfile Brigadier?
   transactions     Transaction[] @relation("CreatedBy")
   aiChats          AIChat[]
+  notifications    Notification[]
 }
 
 model Farmer {
@@ -301,3 +304,14 @@ model MonitoringConfig {
   createdAt DateTime @default(now())
 }
 
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  title     String
+  message   String
+  type      String   @default("INFO") // INFO, SUCCESS, WARNING, ERROR
+  isRead    Boolean  @default(false)
+  link      String?  // Optional link to redirect on click
+  createdAt DateTime @default(now())
+}

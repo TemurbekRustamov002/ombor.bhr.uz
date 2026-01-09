@@ -2,15 +2,14 @@
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { prisma } from "@/lib/prisma";
-import { getSession } from "@/lib/auth";
 import { z } from "zod";
+import { checkRole } from "@/lib/rbac";
+import { notifyAdmins } from "./notifications";
 
 const questionSchema = z.object({
     question: z.string().min(3).max(500),
 });
 
-// Initialize Gemini
-// Note: In production, user should put their API key in .env file
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "YOUR_API_KEY_HERE");
 
 interface WeatherData {
@@ -21,12 +20,10 @@ interface WeatherData {
     location: string;
 }
 
-// Mock weather function (In real implementation, fetch from OpenWeatherMap)
 async function getWeather(lat: string = "40.1", lon: string = "65.3"): Promise<WeatherData> {
     try {
         const apiKey = process.env.OPENWEATHER_API_KEY;
         if (!apiKey) {
-            // Return dummy data if no key provided to prevent crash
             return {
                 temp: 24,
                 description: "Ochiq havo",
@@ -61,16 +58,11 @@ async function getWeather(lat: string = "40.1", lon: string = "65.3"): Promise<W
 
 export async function askAgronomist(rawInput: string) {
     try {
-        // 0. Security & Validation
-        const session = await getSession();
-        if (!session) throw new Error("Avtorizatsiyadan o'ting");
+        const session = await checkRole(['BRIGADIER', 'AGRONOMIST', 'ADMIN', 'DIRECTOR']);
 
         const { question } = questionSchema.parse({ question: rawInput });
-
-        // 1. Get Contextual Data (Weather + Field Activities)
         const weather = await getWeather();
 
-        // Fetch current brigadier's active works for better context
         const brigadier = await prisma.brigadier.findUnique({
             where: { userId: session.userId },
             include: {
@@ -86,7 +78,6 @@ export async function askAgronomist(rawInput: string) {
             `- ${a.contour.number}-konturda ${a.workStage.name} (${a.status})`
         ).join('\n') || "Hozircha faol ishlar qayd etilmagan.";
 
-        // 2. Construct Prompt
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
         const prompt = `
@@ -97,23 +88,18 @@ export async function askAgronomist(rawInput: string) {
             - Dala holati (Brigadirning joriy ishlari):
             ${activitiesContext}
             
-            Foydalanuvchi (Brigadir) savoli: "${question}"
+            Foydalanuvchi (Xodim) savoli: "${question}"
             
             Vazifa: 
             Agronom sifatida qisqa, londa va aniq maslahat beryapsiz. Dala holati va ob-havoni inobatga oling. 
             Javobni o'zbek tilida, samimiy va professional shaklda bering. 
-            Xatolar bo'lsa (masalan yomg'irda dori sepishmoqchi bo'lsa), qat'iy ogohlantiring.
         `;
 
-        // 3. Generate Answer
         const result = await model.generateContent(prompt);
-        const response = result.response;
-        const text = response.text();
+        const text = result.response.text();
 
-        // 4. Persist to Database (Background, don't block response too much)
         if (session?.userId) {
             try {
-                // Find or Create an active chat for today
                 const today = new Date();
                 today.setHours(0, 0, 0, 0);
 
@@ -142,6 +128,12 @@ export async function askAgronomist(rawInput: string) {
                         { chatId: chat.id, role: 'ai', content: text, weather: JSON.stringify(weather) }
                     ]
                 });
+
+                await notifyAdmins(
+                    "AI Agronomga savol",
+                    `Foydalanuvchi "${session.fullName}" savol berdi: "${question.substring(0, 50)}..."`,
+                    "INFO"
+                );
             } catch (dbErr) {
                 console.error("DB Save Error in AI:", dbErr);
             }
@@ -155,7 +147,7 @@ export async function askAgronomist(rawInput: string) {
     } catch (error: any) {
         console.error("AI Error:", error);
         return {
-            error: "Kechirasiz, hozircha aloqa sifatsiz. Iltimos, birozdan so'ng qayta urinib ko'ring yoki bosh agronomga qo'ng'iroq qiling."
+            error: error.message || "Kechirasiz, hozircha aloqa sifatsiz."
         };
     }
 }
@@ -165,7 +157,7 @@ export async function getInitialWeather() {
 }
 
 export async function getAIChatHistory() {
-    const session = await getSession();
+    const session = await checkRole(['BRIGADIER', 'AGRONOMIST', 'ADMIN', 'DIRECTOR', 'MONITOR']);
     if (!session?.userId) return [];
 
     try {

@@ -5,20 +5,33 @@ import * as dotenv from "dotenv";
 dotenv.config();
 
 async function main() {
-    const adminPassword = await bcrypt.hash("admin123", 10);
+    const defaultUsers = [
+        { username: "superadmin", fullName: "Bosh Boshqaruvchi", password: "superadmin123", role: "SUPER_ADMIN" },
+        { username: "admin", fullName: "Administrator Navbahor", password: "admin123", role: "ADMIN" },
+        { username: "direktor", fullName: "Cluster Direktori", password: "direktor123", role: "DIRECTOR" },
+        { username: "omborchi", fullName: "Ombor Mudiri", password: "omborchi123", role: "WAREHOUSEMAN" },
+        { username: "agronom", fullName: "Bosh Agronom", password: "agronom123", role: "AGRONOMIST" },
+        { username: "monitor", fullName: "TV Monitor", password: "monitor123", role: "MONITOR" },
+    ];
 
-    const admin = await prisma.user.upsert({
-        where: { username: "admin" },
-        update: {},
-        create: {
-            username: "admin",
-            password: adminPassword,
-            fullName: "Admin Navbahor",
-            role: "ADMIN",
-        },
-    });
-
-    console.log("Admin created:", admin.username);
+    for (const user of defaultUsers) {
+        const hashedPassword = await bcrypt.hash(user.password, 10);
+        await prisma.user.upsert({
+            where: { username: user.username },
+            update: {
+                password: hashedPassword,
+                role: user.role as any,
+                fullName: user.fullName
+            },
+            create: {
+                username: user.username,
+                password: hashedPassword,
+                fullName: user.fullName,
+                role: user.role as any,
+            },
+        });
+        console.log(`User seeded: ${user.username} (${user.role})`);
+    }
 
     // Seed some initial products
     const productData = [

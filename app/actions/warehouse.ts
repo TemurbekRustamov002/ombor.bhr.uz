@@ -2,10 +2,11 @@
 
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
-
 import bcrypt from "bcryptjs";
 import { Role } from "@prisma/client";
 import { z } from "zod";
+import { checkRole } from "@/lib/rbac";
+import { notifyAdmins } from "./notifications";
 
 const transactionItemSchema = z.object({
     productId: z.string().uuid(),
@@ -33,12 +34,14 @@ const transactionSchema = z.object({
 });
 
 export async function getProducts() {
+    await checkRole(['ADMIN', 'WAREHOUSEMAN', 'AGRONOMIST', 'DIRECTOR', 'MONITOR']);
     return await prisma.product.findMany({
         orderBy: { name: 'asc' }
     });
 }
 
 export async function getWarehouseTransactions() {
+    await checkRole(['ADMIN', 'WAREHOUSEMAN', 'AGRONOMIST', 'DIRECTOR', 'MONITOR']);
     return await prisma.transaction.findMany({
         include: {
             product: true,
@@ -56,11 +59,11 @@ export async function getWarehouseTransactions() {
 }
 
 export async function recordTransaction(rawPayload: any) {
+    await checkRole(['ADMIN', 'WAREHOUSEMAN']);
     try {
         const data = transactionSchema.parse(rawPayload);
         const batchId = Math.random().toString(36).substring(2, 11).toUpperCase();
 
-        // 1. Validate all products and stock
         for (const item of data.items) {
             const product = await prisma.product.findUnique({ where: { id: item.productId } });
             if (!product) return { error: `Mahsulot topilmadi: ${item.productId}` };
@@ -73,7 +76,6 @@ export async function recordTransaction(rawPayload: any) {
         let finalFarmerId = data.farmerId;
         let finalBrigadierId = data.brigadierId;
 
-        // Create new farmer if data provided
         if (data.newFarmerData && !data.farmerId && !data.brigadierId) {
             const { inn, ni, directorName, passportSerial, passportNumber, pinfl, address, phone } = data.newFarmerData;
 
@@ -81,11 +83,10 @@ export async function recordTransaction(rawPayload: any) {
             if (existingFarmer) {
                 finalFarmerId = existingFarmer.id;
             } else {
-                // Create User and Farmer
                 const hashedPassword = await bcrypt.hash("123456", 10);
                 const newUser = await prisma.user.create({
                     data: {
-                        username: inn, // Use INN as username
+                        username: inn,
                         password: hashedPassword,
                         fullName: ni || directorName || inn,
                         role: Role.FARMER
@@ -110,9 +111,7 @@ export async function recordTransaction(rawPayload: any) {
             }
         }
 
-        // 2. Perform transactions in a single database transaction
         const results = await prisma.$transaction(async (tx) => {
-            // A. Create Formal Waybill
             const lastWaybill = await (tx as any).waybill.findFirst({
                 orderBy: { createdAt: 'desc' }
             });
@@ -171,7 +170,6 @@ export async function recordTransaction(rawPayload: any) {
                     }
                 });
 
-                // Update Main Warehouse Stock
                 const newStock = data.type === 'IN'
                     ? product.currentStock + item.amount
                     : product.currentStock - item.amount;
@@ -181,7 +179,6 @@ export async function recordTransaction(rawPayload: any) {
                     data: { currentStock: newStock }
                 });
 
-                // If transferring to Brigadier, also update BrigadierStock
                 if (trType === 'TRANSFER' && finalBrigadierId) {
                     await (tx as any).brigadierStock.upsert({
                         where: {
@@ -204,19 +201,26 @@ export async function recordTransaction(rawPayload: any) {
             return { transactions, waybillId: waybill.id };
         });
 
+        // Notify Admins about the transaction
+        await notifyAdmins(
+            `Yangi ombor amaliyoti`,
+            `${results.transactions.length} turdagi mahsulotlar ${data.type === 'IN' ? 'qabul qilindi' : 'chiqarildi'}.`,
+            data.type === 'IN' ? 'SUCCESS' : 'INFO',
+            `/warehouse`
+        );
+
         revalidatePath("/warehouse");
         revalidatePath("/");
 
-        // Return the waybill ID for linking
         return { success: true, transactionId: results.transactions[0].id, waybillId: results.waybillId, batchId: batchId };
     } catch (error: any) {
-        console.error(error);
         return { error: error.message || "Xatolik yuz berdi" };
     }
 }
 
 export async function getTransactionById(id: string) {
     if (!id) return null;
+    await checkRole(['ADMIN', 'WAREHOUSEMAN', 'DIRECTOR', 'AGRONOMIST', 'MONITOR', 'FARMER', 'BRIGADIER']);
     const transaction = await prisma.transaction.findUnique({
         where: { id },
         include: {
@@ -243,7 +247,6 @@ export async function getTransactionById(id: string) {
                 createdBy: true
             }
         });
-        // Attach all products to this transaction object for Waybill rendering
         return { ...transaction, batchItems: batchTransactions };
     }
 
@@ -256,13 +259,13 @@ export async function createProduct(data: {
     unit: string,
     minStockAlert: number
 }) {
+    await checkRole(['ADMIN', 'WAREHOUSEMAN']);
     try {
         await prisma.product.create({
             data: {
                 name: data.name,
                 category: data.category,
                 unit: data.unit as any,
-                // pricePerUnit removed
                 minStockAlert: data.minStockAlert,
                 currentStock: 0
             }

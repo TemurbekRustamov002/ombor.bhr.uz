@@ -33,7 +33,7 @@ export async function login(formData: FormData) {
     const expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
     const session = await encrypt({
         userId: user.id,
-        role: user.role,
+        role: user.role.trim() as any, // Trim to be safe against spaces
         fullName: user.fullName,
         farmerId: user.farmerProfile?.id,
         expires

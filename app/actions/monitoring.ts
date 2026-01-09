@@ -7,7 +7,8 @@ import { revalidatePath } from "next/cache";
 export async function getMonitoringStats() {
     try {
         const session = await getSession();
-        if (!session || (session.role !== 'SUPERADMIN' && session.role !== 'ADMIN' && session.role !== 'DIRECTOR')) {
+        const allowedRoles = ['SUPER_ADMIN', 'ADMIN', 'DIRECTOR', 'AGRONOMIST', 'MONITOR'];
+        if (!session || !allowedRoles.includes(session.role)) {
             throw new Error("Ruxsat berilmagan");
         }
 
@@ -130,7 +131,8 @@ export async function getMonitoringStats() {
 
 export async function getMonitoringConfig() {
     const session = await getSession();
-    if (!session || (session.role !== 'SUPERADMIN' && session.role !== 'ADMIN')) {
+    const adminRoles = ['SUPER_ADMIN', 'ADMIN', 'DIRECTOR', 'AGRONOMIST', 'MONITOR'];
+    if (!session || !adminRoles.includes(session.role)) {
         return [];
     }
     // @ts-ignore
@@ -142,7 +144,7 @@ export async function getMonitoringConfig() {
 export async function addMonitoringColumn(label: string) {
     try {
         const session = await getSession();
-        if (!session || (session.role !== 'SUPERADMIN' && session.role !== 'ADMIN')) {
+        if (!session || (session.role !== 'SUPER_ADMIN' && session.role !== 'ADMIN')) {
             throw new Error("Ruxsat berilmagan");
         }
         const key = label.toLowerCase().replace(/\s+/g, '_');
@@ -159,7 +161,7 @@ export async function addMonitoringColumn(label: string) {
 
 export async function getFullWarehouseTransactions() {
     const session = await getSession();
-    if (!session || (session.role !== 'SUPERADMIN' && session.role !== 'ADMIN')) return [];
+    if (!session || (session.role !== 'SUPER_ADMIN' && session.role !== 'ADMIN' && session.role !== 'DIRECTOR')) return [];
 
     return await prisma.transaction.findMany({
         include: {
@@ -174,7 +176,7 @@ export async function getFullWarehouseTransactions() {
 
 export async function getFullFieldActivities() {
     const session = await getSession();
-    if (!session || (session.role !== 'SUPERADMIN' && session.role !== 'ADMIN')) return [];
+    if (!session || (session.role !== 'SUPER_ADMIN' && session.role !== 'ADMIN' && session.role !== 'DIRECTOR')) return [];
 
     return await prisma.fieldActivity.findMany({
         include: {

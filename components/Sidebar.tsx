@@ -2,18 +2,20 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Tractor, Warehouse, Activity, LogOut, Leaf, Map, FileSpreadsheet } from 'lucide-react';
+import { LayoutDashboard, Tractor, Warehouse, Activity, LogOut, Leaf, Map, FileSpreadsheet, Settings, Database } from 'lucide-react';
 import { clsx } from 'clsx';
 import { motion } from 'framer-motion';
 import { logout } from '@/app/actions/auth';
 
 const menuItems = [
-    { name: 'Boshqaruv', href: '/', icon: LayoutDashboard, roles: ['ADMIN', 'DIRECTOR'] },
-    { name: 'Fermerlar', href: '/farmers', icon: Tractor, roles: ['ADMIN', 'DIRECTOR', 'AGRONOMIST'] },
-    { name: 'Brigadalar', href: '/brigades', icon: Map, roles: ['ADMIN', 'DIRECTOR', 'AGRONOMIST'] },
-    { name: 'Omborxona', href: '/warehouse', icon: Warehouse, roles: ['ADMIN', 'DIRECTOR', 'WAREHOUSEMAN'] },
-    { name: 'Monitoring', href: '/monitoring', icon: Activity, roles: ['ADMIN', 'DIRECTOR', 'AGRONOMIST'] },
-    { name: 'Hisobotlar', href: '/reports', icon: FileSpreadsheet, roles: ['ADMIN', 'DIRECTOR'] },
+    { name: 'Boshqaruv', href: '/', icon: LayoutDashboard, roles: ['SUPER_ADMIN', 'ADMIN', 'DIRECTOR'] },
+    { name: 'Fermerlar', href: '/farmers', icon: Tractor, roles: ['SUPER_ADMIN', 'ADMIN', 'DIRECTOR'] },
+    { name: 'Brigadalar', href: '/brigades', icon: Map, roles: ['SUPER_ADMIN', 'ADMIN', 'DIRECTOR', 'AGRONOMIST'] },
+    { name: 'Omborxona', href: '/warehouse', icon: Warehouse, roles: ['SUPER_ADMIN', 'ADMIN', 'DIRECTOR', 'WAREHOUSEMAN'] },
+    { name: 'Monitoring', href: '/monitoring', icon: Activity, roles: ['SUPER_ADMIN', 'ADMIN', 'DIRECTOR', 'AGRONOMIST', 'MONITOR'] },
+    { name: 'Hisobotlar', href: '/reports', icon: FileSpreadsheet, roles: ['SUPER_ADMIN', 'ADMIN', 'DIRECTOR'] },
+    { name: 'Tizim', href: '/admin', icon: Settings, roles: ['SUPER_ADMIN', 'ADMIN'] },
+    { name: 'Ma\'lumotlar', href: '/admin/database', icon: Database, roles: ['SUPER_ADMIN'] },
     { name: 'Panel', href: '/brigadier-dashboard', icon: LayoutDashboard, roles: ['BRIGADIER'] },
 ];
 
