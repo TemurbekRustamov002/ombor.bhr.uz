@@ -1,0 +1,303 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  DIRECTOR
+  FARMER
+  WAREHOUSEMAN
+  AGRONOMIST
+  BRIGADIER
+}
+
+enum TransactionType {
+  IN          // From Supplier to Warehouse
+  OUT         // From Warehouse to Farmer (Internal)
+  TRANSFER    // From Warehouse to Brigadier
+  CONSUMPTION // Brigadier using products on field
+  ADJUSTMENT  // Manual stock correction
+}
+
+enum ProductUnit {
+  KG
+  TON
+  LITER
+  GRAMM
+  SACK
+  METER
+  PIECE
+}
+
+model User {
+  id            String    @id @default(uuid())
+  username      String    @unique
+  password      String
+  fullName      String
+  role          Role      @default(FARMER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  farmerProfile    Farmer?
+  brigadierProfile Brigadier?
+  transactions     Transaction[] @relation("CreatedBy")
+  aiChats          AIChat[]
+}
+
+model Farmer {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id])
+  
+  ni              String?  // Legal Entity Name (Fermer xo'jaligi nomi)
+  inn             String   @unique
+  address         String?  // Renamed/Consolidated from region
+  landArea        Float    @default(0) // Gektar
+  phone           String?
+  contractNumber  String?
+
+  // Fields for Document Generation (Ishonchnoma)
+  directorName    String?
+  passportSerial  String?
+  passportNumber  String?
+  pinfl          String?
+  
+  contracts       Contract[]
+  transactions    Transaction[]
+  customData      Json     @default("{}")
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Product {
+  id            String       @id @default(uuid())
+  name          String       @unique
+  category      String       // O'g'it, Yoqilg'i, Kimyoviy vosita
+  unit          ProductUnit
+  currentStock  Float        @default(0)
+  minStockAlert Float        @default(0)
+  
+  transactions   Transaction[]
+  brigadierStocks BrigadierStock[]
+  batches        ProductBatch[]
+  
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model Transaction {
+  id            String          @id @default(uuid())
+  type          TransactionType
+  date          DateTime        @default(now())
+  
+  amount        Float
+  batchId       String?         // Groups items for UI
+  waybillId     String?
+  waybill       Waybill?        @relation(fields: [waybillId], references: [id])
+  
+  batchNumber   String?         // Quality control batch number
+  productBatchId String?
+  productBatch   ProductBatch?  @relation(fields: [productBatchId], references: [id])
+  
+  relatedDocId  String?         // Document ID optional
+  description   String?
+  
+  // Who performed the transaction (e.g. Warehouseman)
+  createdById   String
+  createdBy     User            @relation("CreatedBy", fields: [createdById], references: [id])
+  
+  // Product involved
+  productId     String
+  product       Product         @relation(fields: [productId], references: [id])
+  
+  // If related to a farmer (e.g. distributed to farmer, or recieved from farmer)
+  farmerId      String?
+  farmer        Farmer?         @relation(fields: [farmerId], references: [id])
+  
+  // If related to cluster's own land
+  brigadierId   String?
+  brigadier     Brigadier?      @relation("BrigadierTransactions", fields: [brigadierId], references: [id])
+  
+  contourId     String?
+  contour       Contour?        @relation(fields: [contourId], references: [id])
+
+  createdAt     DateTime        @default(now())
+}
+
+model Waybill {
+  id              String        @id @default(uuid())
+  number          String        @unique // Formal document number (e.g. "NX-2024-001")
+  type            TransactionType
+  date            DateTime      @default(now())
+  
+  receiverName    String
+  shipperName     String
+  transportInfo   String?
+  
+  transactions    Transaction[]
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model ProductBatch {
+  id            String        @id @default(uuid())
+  productId     String
+  product       Product       @relation(fields: [productId], references: [id])
+  
+  batchNumber   String        @unique
+  expiryDate    DateTime?
+  manufacturer  String?
+  certificates  String?       // Link to certificates
+  
+  transactions  Transaction[]
+  
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+}
+
+model Brigadier {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id])
+  
+  phone           String?
+  address         String?
+  
+  contours        Contour[]
+  transactions    Transaction[] @relation("BrigadierTransactions")
+  activities      FieldActivity[]
+  stock           BrigadierStock[]
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Contour {
+  id              String   @id @default(uuid())
+  number          String   @unique
+  name            String?
+  area            Float    // Gektar
+  
+  brigadierId     String?
+  brigadier       Brigadier? @relation(fields: [brigadierId], references: [id])
+  
+  transactions    Transaction[]
+  activities      FieldActivity[]
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model BrigadierStock {
+  id            String    @id @default(uuid())
+  brigadierId   String
+  brigadier     Brigadier @relation(fields: [brigadierId], references: [id])
+  
+  productId     String
+  product       Product   @relation(fields: [productId], references: [id])
+  
+  amount        Float     @default(0)
+  
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([brigadierId, productId])
+}
+
+model AIChat {
+  id          String      @id @default(uuid())
+  userId      String
+  user        User        @relation(fields: [userId], references: [id])
+  title       String?
+  messages    AIMessage[]
+  createdAt   DateTime    @default(now())
+}
+
+model AIMessage {
+  id        String   @id @default(uuid())
+  chatId    String
+  chat      AIChat   @relation(fields: [chatId], references: [id])
+  role      String   // 'user' or 'ai'
+  content   String   @db.Text
+  weather   Json?
+  createdAt DateTime @default(now())
+}
+
+model Contract {
+  id            String      @id @default(uuid())
+  farmerId      String
+  farmer        Farmer      @relation(fields: [farmerId], references: [id])
+  
+  year          Int
+  planAmount    Float       // Rejadagi topshirish (tonna)
+  actualAmount  Float       @default(0) // Amalda
+  
+  status        String      @default("ACTIVE") // ACTIVE, COMPLETED, CANCELLED
+  customData    Json        @default("{}")
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([farmerId, year])
+}
+
+model WorkStage {
+  id            String          @id @default(uuid())
+  name          String          @unique // e.g., "1-suv", "Shudgor", "O'g'itlash"
+  order         Int             @default(0) // To order stages
+  description   String?
+  
+  activities    FieldActivity[]
+  
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+}
+
+enum ActivityStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model FieldActivity {
+  id              String         @id @default(uuid())
+  
+  status          ActivityStatus @default(PENDING)
+  comment         String?
+  completionDate  DateTime?
+  
+  // Relations
+  workStageId     String
+  workStage       WorkStage      @relation(fields: [workStageId], references: [id])
+  
+  contourId       String
+  contour         Contour        @relation(fields: [contourId], references: [id])
+  
+  brigadierId     String
+  brigadier       Brigadier      @relation(fields: [brigadierId], references: [id])
+  
+  // Products used in this activity (optional link)
+  // transactions Transaction[] // One activity might involve multiple transactions
+  
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@unique([contourId, workStageId]) // One stage per contour
+}
+
+model MonitoringConfig {
+  id        String   @id @default(uuid())
+  key       String   @unique // The identifier for the custom column
+  label     String   // The display name
+  type      String   @default("string") // string, number, boolean
+  createdAt DateTime @default(now())
+}
+
